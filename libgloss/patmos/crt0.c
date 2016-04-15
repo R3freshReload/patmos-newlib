@@ -91,40 +91,53 @@ void __start();
 void _start() __attribute__((naked,used));
 void _start()
 {
+  // ---------------------------------------------------------------------------
   // retrieve the id of the current core
-  const int id = *((_iodev_ptr_t)(__PATMOS_CPUINFO_COREID));
+  // store id in $r1
+  asm volatile("li $r1 = %0;"
+               "lwl $r1 = [$r1];"
+               "nop;"
+               : : "i" (__PATMOS_CPUINFO_COREID));
 
   // ---------------------------------------------------------------------------
   // store return information of caller
-  asm volatile ("mfs $r29 = $srb;"
-                "swm [%0] = $r29;"
-                "mfs $r29 = $sro;"
-                "swm [%1] = $r29;"
-                : : "r" (&_loader_baseaddr[id]), "r" (&_loader_off[id]));
+  asm volatile ("shadd2 $r2 = $r1, %0;"
+                "mfs $r3 = $srb;"
+                "swm [$r2] = $r3;"
+                "shadd2 $r2 = $r1, %1;"
+                "mfs $r3 = $sro;"
+                "swm [$r2] = $r3;"
+                : : "i" (&_loader_baseaddr[0]), "i" (&_loader_off[0]));
 
   // ---------------------------------------------------------------------------
   // setup stack frame and stack cache.
+
+  // compute stack size, using bit-twiddling to compute absolute size
+  // store size in $r4, keep base addresses in $r2 and $r3
+  asm volatile ("li $r2 = %0;"
+                "li $r3 = %1;"
+                "sub $r4 = $r3, $r2;"
+                "sra $r5 = $r4, 31;"
+                "add $r4 = $r4, $r5;"
+                "xor $r4 = $r4, $r5;"
+                : : "i" (&_shadow_stack_base), "i" (&_stack_cache_base));
 
   // compute effective stack addresses (needed for CMPs)
-  int stack_size =
-    (unsigned)&_stack_cache_base - (unsigned)&_shadow_stack_base;
-
-  // make sure to have a positive stack size
-  // workaround for -O0: avoid branch, perform abs(stack_size) via bit twiddling
-  int const mask = stack_size >> (sizeof(int) * 8 - 1);
-  stack_size = (stack_size + mask) ^ mask;
-
-  const unsigned shadow_stack_base =
-    (unsigned)&_shadow_stack_base - 2*stack_size*id;
-  const unsigned stack_cache_base =
-    (unsigned)&_stack_cache_base - 2*stack_size*id;
+  // store effective addresses in $r2 and $r3
+  asm volatile ("mul $r4, $r1;"
+                "nop;"
+                "mfs $r4 = $s2;"
+                "sl $r4 = $r4, 1;"
+                "sub $r2 = $r2, $r4;"
+                "sub $r3 = $r3, $r4;"
+                );
 
   // ---------------------------------------------------------------------------
   // setup stack frame and stack cache.
-  asm volatile ("mov $r31 = %0;" // initialize shadow stack pointer"
-                "mts $ss  = %1;" // initialize the stack cache's spill pointer"
-                "mts $st  = %1;" // initialize the stack cache's top pointer"
-                 : : "r" (shadow_stack_base), "r" (stack_cache_base));
+  asm volatile ("mov $r31 = $r2;" // initialize shadow stack pointer"
+                "mts $ss  = $r3;" // initialize the stack cache's spill pointer"
+                "mts $st  = $r3;" // initialize the stack cache's top pointer"
+                );
 
   // ---------------------------------------------------------------------------
   // continue in __start
@@ -139,11 +152,12 @@ void _start()
   // function (but the noinline attribute prevents this anyway).
   // If we need to analyse this code, we can easily extend the compiler and
   // platin to support inline asm (and we should, anyway!).
-  asm volatile ("call %0;"        // resume in the no-return __start function 
+  asm volatile ("li $r1 = %0;"
+                "call $r1;"       // resume in the no-return __start function
                 "nop  ;"
                 "nop  ;"
                 "nop  ;"	  // no need for a 'ret'
-                 : : "r" (&__start));
+                 : : "i" (&__start));
 }
 
 /// __start - Main driver for program setup and execution.

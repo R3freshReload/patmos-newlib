@@ -19,10 +19,9 @@
 #include <setjmp.h>
 
 // Note: This cannot be a .S file since we compile newlib as bitcode archives.
-// Note: naked should imply noinline, just want to make sure. Must be a proper call 
-//       as the compiler needs to generate sens afterwards.
-
-int setjmp(jmp_buf env) __attribute__((naked,noinline));
+// Note: This should be naked, but that attribute is unusable in LLVM as of now
+// int setjmp(jmp_buf env) __attribute__((naked,noinline,returns_twice));
+int setjmp(jmp_buf env) __attribute__((noinline,returns_twice));
 int setjmp(jmp_buf env) 
 {
     // set res to 0 in asm so that the compiler does not optimize it away
@@ -61,15 +60,15 @@ int setjmp(jmp_buf env)
     return res;
 }
 
-void longjmp(jmp_buf env, int value) __attribute__((naked));
+// Note: This should be naked, but that attribute is unusable in LLVM as of now
+// void longjmp(jmp_buf env, int value) __attribute__((naked,noinline));
+void longjmp(jmp_buf env, int value) __attribute__((noinline));
 void longjmp(jmp_buf env, int value)
 {
     // Restore all callee-saved registers, predicates and TOS of stack cache
     // The stack cache is restored by first spilling everything to main memory, 
     // setting both the top an spill pointer to old stack top, and then ensuring the old 
     // cache size.
-    // TODO setting both s5 and s6 and spilling first might not be necessary, depending 
-    //      on mts $s5 syntax.
     asm volatile (
        "lwc $r20 = [%0 + 0]  \n\
 	lwc $r21 = [%0 + 1]  \n\
@@ -106,7 +105,5 @@ void longjmp(jmp_buf env, int value)
 	mov $r1 = %1"
 	: : "r" (env), "r" (value)
     );
-
-    // TODO mark as unreachable, so that the compiler does not insert a ret here
 }
 
